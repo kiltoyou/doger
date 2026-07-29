@@ -19,6 +19,7 @@ model User {
   avatarColor  String   @default("#2D7CFF")
   avatarUrl    String?
   status       String   @default("offline") // online | offline | away
+  lastSeenAt   DateTime?
   mood         String?
   isPremium    Boolean  @default(false)
   createdAt    DateTime @default(now())
@@ -28,6 +29,7 @@ model User {
   liveParticipation LiveRoomParticipant[]
   achievements      UserAchievement[]
   notifications     Notification[]
+  reactions         Reaction[]
 }
 
 model Chat {
@@ -54,19 +56,40 @@ model ChatMember {
 }
 
 model Message {
+  id          String    @id @default(uuid())
+  chatId      String
+  senderId    String
+  type        String    @default("text") // text | voice | file | image
+  content     String? // текст сообщения
+  fileUrl     String?
+  fileName    String?
+  fileSize    Int?
+  duration    Int? // для voice, в секундах
+  deliveredAt DateTime?
+  readAt      DateTime?
+  replyToId   String?
+  editedAt    DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  chat    Chat       @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  sender  User       @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  replyTo Message?   @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies Message[]  @relation("MessageReplies")
+  reactions Reaction[]
+}
+
+model Reaction {
   id        String   @id @default(uuid())
-  chatId    String
-  senderId  String
-  type      String   @default("text") // text | voice | file | image
-  content   String? // текст сообщения
-  fileUrl   String?
-  fileName  String?
-  fileSize  Int?
-  duration  Int? // для voice, в секундах
+  messageId String
+  userId    String
+  emoji     String
   createdAt DateTime @default(now())
 
-  chat   Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
-  sender User @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
 }
 
 model LiveRoom {

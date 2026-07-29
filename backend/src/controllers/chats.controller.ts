@@ -17,30 +17,41 @@ export async function listChats(req: AuthRequest, res: Response) {
     },
   });
 
-  const chats = memberships.map(({ chat }) => {
-    const lastMessage = chat.messages[0] ?? null;
-    const otherMembers = chat.members.filter((m) => m.userId !== req.userId);
-    return {
-      id: chat.id,
-      type: chat.type,
-      name: chat.name ?? otherMembers[0]?.user.displayName ?? "Чат",
-      preview: lastMessage
-        ? lastMessage.type === "voice"
-          ? "🎤 Голосовое сообщение"
-          : lastMessage.type === "file"
-          ? `📎 ${lastMessage.fileName}`
-          : lastMessage.content
-        : "",
-      lastMessageAt: lastMessage?.createdAt ?? chat.createdAt,
-      isLive: !!chat.liveRoom?.isActive,
-      members: chat.members.map((m) => ({
-        id: m.user.id,
-        displayName: m.user.displayName,
-        avatarColor: m.user.avatarColor,
-        status: m.user.status,
-      })),
-    };
-  });
+  const chats = await Promise.all(
+    memberships.map(async ({ chat }) => {
+      const lastMessage = chat.messages[0] ?? null;
+      const otherMembers = chat.members.filter((m) => m.userId !== req.userId);
+
+      const unreadCount = await prisma.message.count({
+        where: { chatId: chat.id, senderId: { not: req.userId }, readAt: null },
+      });
+
+      return {
+        id: chat.id,
+        type: chat.type,
+        name: chat.name ?? otherMembers[0]?.user.displayName ?? "Чат",
+        preview: lastMessage
+          ? lastMessage.deletedAt
+            ? "Сообщение удалено"
+            : lastMessage.type === "voice"
+            ? "🎤 Голосовое сообщение"
+            : lastMessage.type === "file"
+            ? `📎 ${lastMessage.fileName}`
+            : lastMessage.content
+          : "",
+        lastMessageAt: lastMessage?.createdAt ?? chat.createdAt,
+        isLive: !!chat.liveRoom?.isActive,
+        unreadCount,
+        members: chat.members.map((m) => ({
+          id: m.user.id,
+          displayName: m.user.displayName,
+          avatarColor: m.user.avatarColor,
+          status: m.user.status,
+          lastSeenAt: m.user.lastSeenAt,
+        })),
+      };
+    })
+  );
 
   chats.sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime());
 
@@ -88,7 +99,11 @@ export async function getMessages(req: AuthRequest, res: Response) {
   const messages = await prisma.message.findMany({
     where: { chatId },
     orderBy: { createdAt: "asc" },
-    include: { sender: true },
+    include: {
+      sender: true,
+      replyTo: { include: { sender: true } },
+      reactions: true,
+    },
   });
 
   return res.json({
@@ -96,12 +111,26 @@ export async function getMessages(req: AuthRequest, res: Response) {
       id: m.id,
       mine: m.senderId === req.userId,
       type: m.type,
-      content: m.content,
-      fileUrl: m.fileUrl,
+      content: m.deletedAt ? null : m.content,
+      fileUrl: m.deletedAt ? null : m.fileUrl,
       fileName: m.fileName,
       fileSize: m.fileSize,
       duration: m.duration,
       createdAt: m.createdAt,
+      editedAt: m.editedAt,
+      deleted: !!m.deletedAt,
+      status: m.readAt ? "read" : m.deliveredAt ? "delivered" : "sent",
+      replyTo: m.replyTo
+        ? {
+            id: m.replyTo.id,
+            type: m.replyTo.type,
+            content: m.replyTo.deletedAt ? null : m.replyTo.content,
+            fileName: m.replyTo.fileName,
+            deleted: !!m.replyTo.deletedAt,
+            sender: { displayName: m.replyTo.sender.displayName },
+          }
+        : null,
+      reactions: m.reactions.map((r) => ({ userId: r.userId, emoji: r.emoji })),
       sender: { id: m.sender.id, displayName: m.sender.displayName, avatarColor: m.sender.avatarColor },
     })),
   });
@@ -114,6 +143,7 @@ const sendMessageSchema = z.object({
   fileName: z.string().optional(),
   fileSize: z.number().optional(),
   duration: z.number().optional(),
+  replyToId: z.string().optional(),
 });
 
 export async function sendMessage(req: AuthRequest, res: Response) {
