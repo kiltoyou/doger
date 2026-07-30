@@ -74,6 +74,24 @@ export async function me(req: AuthRequest, res: Response) {
   return res.json({ user: toPublicUser(user) });
 }
 
+const updateMeSchema = z.object({
+  displayName: z.string().min(1).max(48).optional(),
+  mood: z.string().max(100).nullable().optional(),
+  avatarUrl: z.string().nullable().optional(),
+});
+
+export async function updateMe(req: AuthRequest, res: Response) {
+  const parsed = updateMeSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Некорректные данные" });
+
+  const user = await prisma.user.update({
+    where: { id: req.userId },
+    data: parsed.data,
+  });
+
+  return res.json({ user: toPublicUser(user) });
+}
+
 function toPublicUser(user: {
   id: string;
   username: string;

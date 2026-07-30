@@ -23,6 +23,7 @@ export async function searchUsers(req: AuthRequest, res: Response) {
       username: u.username,
       displayName: u.displayName,
       avatarColor: u.avatarColor,
+      avatarUrl: u.avatarUrl,
       status: u.status,
     })),
   });

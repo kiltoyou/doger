@@ -50,6 +50,9 @@ export const api = {
 
   me: () => request<{ user: PublicUser }>("/api/auth/me"),
 
+  updateProfile: (data: { displayName?: string; mood?: string | null; avatarUrl?: string | null }) =>
+    request<{ user: PublicUser }>("/api/auth/me", { method: "PATCH", body: JSON.stringify(data) }),
+
   getChats: () => request<{ chats: any[] }>("/api/chats"),
 
   createChat: (data: { type: "direct" | "group" | "channel"; name?: string; memberIds: string[] }) =>

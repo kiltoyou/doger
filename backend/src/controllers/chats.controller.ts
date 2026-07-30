@@ -46,6 +46,7 @@ export async function listChats(req: AuthRequest, res: Response) {
           id: m.user.id,
           displayName: m.user.displayName,
           avatarColor: m.user.avatarColor,
+          avatarUrl: m.user.avatarUrl,
           status: m.user.status,
           lastSeenAt: m.user.lastSeenAt,
         })),

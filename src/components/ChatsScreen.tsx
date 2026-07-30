@@ -20,8 +20,11 @@ import {
   Trash2,
   Smile,
   X,
+  Users,
+  Forward,
 } from "lucide-react";
 import GlassCard from "./GlassCard";
+import Avatar from "./Avatar";
 import NewChatModal from "./NewChatModal";
 import { api, API_URL } from "../lib/api";
 import { connectSocket } from "../lib/socket";
@@ -33,10 +36,11 @@ const QUICK_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🔥"];
 interface ChatSummary {
   id: string;
   name: string;
+  type: string;
   preview: string;
   isLive: boolean;
   unreadCount: number;
-  members: { id: string; displayName: string; avatarColor: string; status: string; lastSeenAt?: string | null }[];
+  members: { id: string; displayName: string; avatarColor: string; avatarUrl?: string | null; status: string; lastSeenAt?: string | null }[];
 }
 
 interface ReplyPreview {
@@ -102,6 +106,29 @@ function groupReactions(reactions: { userId: string; emoji: string }[] | undefin
   return Array.from(map.values());
 }
 
+const URL_REGEX = /(https?:\/\/[^\s]+)/g;
+
+function linkify(text: string) {
+  const parts = text.split(URL_REGEX);
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      <a
+        key={i}
+        href={part}
+        target="_blank"
+        rel="noreferrer"
+        className="underline break-all"
+        style={{ color: "#2EE6C5" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {part}
+      </a>
+    ) : (
+      <React.Fragment key={i}>{part}</React.Fragment>
+    )
+  );
+}
+
 export default function ChatsScreen() {
   const { user } = useAuth();
   const [chats, setChats] = useState<ChatSummary[]>([]);
@@ -118,6 +145,11 @@ export default function ChatsScreen() {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [forwardingMessage, setForwardingMessage] = useState<ChatMessage | null>(null);
+  const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const typingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stopTypingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -356,6 +388,44 @@ export default function ChatsScreen() {
     setOpenMenuId(null);
   }
 
+  function jumpToMessage(messageId: string) {
+    const el = messageRefs.current[messageId];
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.style.transition = "background-color 0.3s";
+      el.style.backgroundColor = "rgba(45,124,255,0.25)";
+      setTimeout(() => {
+        el.style.backgroundColor = "";
+      }, 1200);
+    }
+    setSearchOpen(false);
+    setSearchQuery("");
+  }
+
+  function startForward(m: ChatMessage) {
+    setForwardingMessage(m);
+    setOpenMenuId(null);
+  }
+
+  function forwardTo(targetChatId: string) {
+    if (!forwardingMessage) return;
+    const socket = connectSocket();
+    socket.emit("message:send", {
+      chatId: targetChatId,
+      type: forwardingMessage.type,
+      content: forwardingMessage.content,
+      fileUrl: forwardingMessage.fileUrl,
+      fileName: forwardingMessage.fileName,
+      fileSize: forwardingMessage.fileSize,
+      duration: forwardingMessage.duration,
+    });
+    setForwardingMessage(null);
+  }
+
+  const searchMatches = searchQuery.trim()
+    ? messages.filter((m) => !m.deleted && m.type === "text" && m.content?.toLowerCase().includes(searchQuery.toLowerCase()))
+    : [];
+
   const activeChatData = chats.find((c) => c.id === activeChat);
   const otherMember = activeChatData?.members.find((m) => m.id !== user?.id);
   const otherPresence = otherMember ? presence[otherMember.id] : undefined;
@@ -400,12 +470,16 @@ export default function ChatsScreen() {
                 style={{ background: activeChat === chat.id ? "rgba(45,124,255,0.12)" : "transparent" }}
               >
                 <div className="relative shrink-0">
-                  <div
-                    className="w-11 h-11 rounded-full flex items-center justify-center text-white text-sm font-semibold"
-                    style={{ background: chat.members[0]?.avatarColor || "#2D7CFF" }}
-                  >
-                    {chat.name[0]}
-                  </div>
+                  {chat.type === "group" ? (
+                    <div
+                      className="w-11 h-11 rounded-full flex items-center justify-center text-white text-sm font-semibold"
+                      style={{ background: GRADIENT }}
+                    >
+                      <Users size={16} color="#fff" />
+                    </div>
+                  ) : (
+                    <Avatar url={other?.avatarUrl} color={other?.avatarColor || chat.members[0]?.avatarColor} name={chat.name} size={44} />
+                  )}
                   {chat.isLive && (
                     <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 animate-pulse" style={{ background: "#FF4D67", borderColor: "#0E1117" }} />
                   )}
@@ -461,24 +535,38 @@ export default function ChatsScreen() {
         ) : (
           <>
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 min-w-0">
                 <button onClick={() => setMobileChatOpen(false)} className="sm:hidden mr-1">
                   <ArrowLeft size={18} color="#8A93A6" />
                 </button>
-                <div
-                  className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-semibold"
-                  style={{ background: otherMember?.avatarColor || "#2D7CFF" }}
-                >
-                  {(activeChatData?.name || "?")[0]}
+                <div className="shrink-0">
+                  {activeChatData?.type === "group" ? (
+                    <div className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-semibold" style={{ background: GRADIENT }}>
+                      <Users size={16} color="#fff" />
+                    </div>
+                  ) : (
+                    <Avatar url={otherMember?.avatarUrl} color={otherMember?.avatarColor} name={activeChatData?.name || "?"} size={40} />
+                  )}
                 </div>
-                <div>
-                  <div className="text-white text-sm font-medium">{activeChatData?.name}</div>
-                  <div className="text-xs" style={{ color: isTyping || otherStatus === "online" ? "#2EE6C5" : "#66708A" }}>
-                    {isTyping ? "печатает..." : otherStatus === "online" ? "в сети" : formatLastSeen(otherLastSeen)}
-                  </div>
+                <div className="min-w-0">
+                  <div className="text-white text-sm font-medium truncate">{activeChatData?.name}</div>
+                  {activeChatData?.type === "group" ? (
+                    <div className="text-xs text-[#8A93A6]">{activeChatData.members.length} участников</div>
+                  ) : (
+                    <div className="text-xs" style={{ color: isTyping || otherStatus === "online" ? "#2EE6C5" : "#66708A" }}>
+                      {isTyping ? "печатает..." : otherStatus === "online" ? "в сети" : formatLastSeen(otherLastSeen)}
+                    </div>
+                  )}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => setSearchOpen((v) => !v)}
+                  className="w-9 h-9 rounded-full flex items-center justify-center"
+                  style={{ background: searchOpen ? GRADIENT : "rgba(255,255,255,0.06)" }}
+                >
+                  <Search size={15} color={searchOpen ? "#fff" : "#8A93A6"} />
+                </button>
                 <button className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: "rgba(255,255,255,0.06)" }}>
                   <Phone size={15} color="#8A93A6" />
                 </button>
@@ -488,11 +576,48 @@ export default function ChatsScreen() {
               </div>
             </div>
 
+            {searchOpen && (
+              <div className="px-6 py-3 border-b border-white/5">
+                <GlassCard className="flex items-center gap-2 px-3 py-2 rounded-2xl mb-2" style={{ background: "rgba(255,255,255,0.05)" }}>
+                  <Search size={14} color="#66708A" />
+                  <input
+                    autoFocus
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Поиск по сообщениям..."
+                    className="flex-1 bg-transparent text-sm text-white/90 outline-none placeholder-[#66708A]"
+                  />
+                </GlassCard>
+                {searchQuery.trim() && (
+                  <div className="flex flex-col gap-1 max-h-40 overflow-y-auto">
+                    {searchMatches.length === 0 && (
+                      <div className="text-xs text-[#66708A] text-center py-2">Ничего не найдено</div>
+                    )}
+                    {searchMatches.map((m) => (
+                      <button
+                        key={m.id}
+                        onClick={() => jumpToMessage(m.id)}
+                        className="text-left px-3 py-2 rounded-xl text-xs hover:bg-white/5"
+                        style={{ background: "rgba(255,255,255,0.04)" }}
+                      >
+                        <span className="text-[#8A93A6]">{m.sender.displayName}: </span>
+                        <span className="text-white">{m.content}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="flex-1 px-6 py-5 flex flex-col gap-3 overflow-y-auto">
               {messages.map((m) => {
                 const grouped = groupReactions(m.reactions, user?.id);
                 return (
-                  <div key={m.id} className={`flex flex-col ${m.mine ? "items-end" : "items-start"}`}>
+                  <div
+                    key={m.id}
+                    ref={(el) => (messageRefs.current[m.id] = el)}
+                    className={`flex flex-col rounded-xl ${m.mine ? "items-end" : "items-start"}`}
+                  >
                     <div className={`flex items-center gap-1 max-w-[70%] ${m.mine ? "flex-row-reverse" : "flex-row"}`}>
                       <div
                         className="px-4 py-2.5 rounded-[20px] backdrop-blur-md"
@@ -520,7 +645,8 @@ export default function ChatsScreen() {
                               <img
                                 src={`${API_URL}${m.fileUrl}`}
                                 alt={m.fileName || "изображение"}
-                                className="rounded-2xl max-w-full max-h-64 mb-1"
+                                onClick={() => setLightboxUrl(`${API_URL}${m.fileUrl}`)}
+                                className="rounded-2xl max-w-full max-h-64 mb-1 cursor-zoom-in"
                               />
                             )}
                             {m.type === "file" && m.fileUrl && (
@@ -541,7 +667,7 @@ export default function ChatsScreen() {
                                 {m.duration != null && <span className="text-[11px] opacity-70 shrink-0">{m.duration}s</span>}
                               </div>
                             )}
-                            {m.type === "text" && <span className="text-sm whitespace-pre-wrap">{m.content}</span>}
+                            {m.type === "text" && <span className="text-sm whitespace-pre-wrap">{linkify(m.content || "")}</span>}
                           </>
                         )}
 
@@ -587,6 +713,9 @@ export default function ChatsScreen() {
                               </div>
                               <button onClick={() => startReply(m)} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[#E4E7ED] hover:bg-white/5">
                                 <CornerUpLeft size={14} /> Ответить
+                              </button>
+                              <button onClick={() => startForward(m)} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[#E4E7ED] hover:bg-white/5">
+                                <Forward size={14} /> Переслать
                               </button>
                               {m.mine && m.type === "text" && (
                                 <button onClick={() => startEdit(m)} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[#E4E7ED] hover:bg-white/5">
@@ -675,6 +804,55 @@ export default function ChatsScreen() {
           </>
         )}
       </div>
+
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-6"
+          style={{ background: "rgba(0,0,0,0.9)" }}
+          onClick={() => setLightboxUrl(null)}
+        >
+          <button className="absolute top-5 right-5 w-10 h-10 rounded-full flex items-center justify-center" style={{ background: "rgba(255,255,255,0.1)" }}>
+            <X size={18} color="#fff" />
+          </button>
+          <img src={lightboxUrl} alt="" className="max-w-full max-h-full rounded-lg" onClick={(e) => e.stopPropagation()} />
+        </div>
+      )}
+
+      {forwardingMessage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: "rgba(0,0,0,0.5)" }}
+          onClick={() => setForwardingMessage(null)}
+        >
+          <GlassCard className="w-full max-w-sm rounded-[24px] p-5" style={{ background: "#141a26" }} >
+            <div onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-white text-base font-semibold">Переслать в...</h2>
+                <button onClick={() => setForwardingMessage(null)} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: "rgba(255,255,255,0.06)" }}>
+                  <X size={14} color="#8A93A6" />
+                </button>
+              </div>
+              <div className="flex flex-col gap-1 max-h-72 overflow-y-auto">
+                {chats.map((chat) => (
+                  <button
+                    key={chat.id}
+                    onClick={() => forwardTo(chat.id)}
+                    className="flex items-center gap-3 px-2 py-2.5 rounded-2xl text-left hover:bg-white/5"
+                  >
+                    <div
+                      className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-semibold shrink-0"
+                      style={{ background: chat.type === "group" ? GRADIENT : chat.members[0]?.avatarColor || "#2D7CFF" }}
+                    >
+                      {chat.type === "group" ? <Users size={14} color="#fff" /> : chat.name[0]}
+                    </div>
+                    <span className="text-white text-sm font-medium truncate">{chat.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </GlassCard>
+        </div>
+      )}
     </>
   );
 }

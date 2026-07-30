@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { MessageCircle } from "lucide-react";
+import React, { useRef, useState } from "react";
+import { MessageCircle, Loader2 } from "lucide-react";
 import GlassCard from "../components/GlassCard";
 import { useAuth } from "../context/AuthContext";
 
@@ -14,11 +14,15 @@ export default function LoginScreen() {
   const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showWakeupHint, setShowWakeupHint] = useState(false);
+  const wakeupTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setBusy(true);
+    setShowWakeupHint(false);
+    wakeupTimer.current = setTimeout(() => setShowWakeupHint(true), 3500);
     try {
       if (mode === "login") {
         await login(email, password);
@@ -29,6 +33,8 @@ export default function LoginScreen() {
       setError(err.message || "Что-то пошло не так");
     } finally {
       setBusy(false);
+      setShowWakeupHint(false);
+      if (wakeupTimer.current) clearTimeout(wakeupTimer.current);
     }
   }
 
@@ -88,13 +94,19 @@ export default function LoginScreen() {
           />
 
           {error && <div className="text-xs text-[#FF4D67]">{error}</div>}
+          {showWakeupHint && (
+            <div className="text-xs text-[#66708A] text-center">
+              Сервер просыпается — обычно это занимает 30–50 секунд, подожди немного 🙂
+            </div>
+          )}
 
           <button
             type="submit"
             disabled={busy}
-            className="mt-2 rounded-2xl py-2.5 text-sm font-medium text-white disabled:opacity-60"
+            className="mt-2 rounded-2xl py-2.5 text-sm font-medium text-white disabled:opacity-60 flex items-center justify-center gap-2"
             style={{ background: GRADIENT }}
           >
+            {busy && <Loader2 size={15} className="animate-spin" />}
             {busy ? "Подождите..." : mode === "login" ? "Войти" : "Зарегистрироваться"}
           </button>
         </form>
